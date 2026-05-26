@@ -2,45 +2,194 @@ import os
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import yfinance as yf
+from datetime import datetime, timedelta, date
 import pytz
+import time
 
 # ─── CONFIG ───────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 DISCORD_WEBHOOK  = os.environ["DISCORD_WEBHOOK"]
 
-MIN_PRICE        = 35       # Minimum stock price filter
-CPR_BUFFER_LOW   = 0.005    # 0.5% buffer for Monthly CPR proximity
-CPR_BUFFER_HIGH  = 0.015    # 1.5% buffer for Monthly CPR proximity
-SMA_BUFFER       = 0.01     # 1% buffer for 1Hr SMA compression check
-WEEKLY_S2_BUFFER = 0.01     # 1% buffer for Weekly S2 proximity
-MONTHLY_R2_BUFFER= 0.015    # 1.5% buffer for Monthly R2 proximity
+MIN_PRICE        = 35
+CPR_BUFFER_LOW   = 0.005
+CPR_BUFFER_HIGH  = 0.015
+SMA_BUFFER       = 0.01
+WEEKLY_S2_BUFFER = 0.01
+MONTHLY_R2_BUFFER= 0.015
 
 IST = pytz.timezone("Asia/Kolkata")
 
-# ─── NSE STOCK LIST ───────────────────────────────────────
+# ─── NSE SYMBOL LIST ──────────────────────────────────────
 def get_nse_symbols():
-    """Fetch all NSE equity symbols from NSE India."""
+    """Fetch all NSE equity symbols."""
     try:
         url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Referer": "https://www.nseindia.com/"
+        }
         resp = requests.get(url, headers=headers, timeout=30)
         df = pd.read_csv(pd.io.common.StringIO(resp.text))
         symbols = df["SYMBOL"].dropna().tolist()
-        # Convert to yfinance format (append .NS)
-        return [f"{s.strip()}.NS" for s in symbols]
+        # Filter out SME/delisted (no $ or special chars)
+        clean = [s.strip() for s in symbols if s.strip().isalpha() or
+                 all(c.isalnum() or c in '-&' for c in s.strip())]
+        print(f"Loaded {len(clean)} NSE symbols")
+        return clean
     except Exception as e:
         print(f"Error fetching NSE symbols: {e}")
-        # Fallback: Nifty 500 sample if NSE fetch fails
-        fallback = [
-            "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
-            "HINDUNILVR.NS","ITC.NS","SBIN.NS","BHARTIARTL.NS","KOTAKBANK.NS",
-            "LT.NS","AXISBANK.NS","ASIANPAINT.NS","MARUTI.NS","WIPRO.NS",
-            "ULTRACEMCO.NS","NESTLEIND.NS","TATAMOTORS.NS","SUNPHARMA.NS","TITAN.NS"
+        # Fallback Nifty 200 symbols
+        return [
+            "RELIANCE","TCS","HDFCBANK","INFY","ICICIBANK","HINDUNILVR","ITC",
+            "SBIN","BHARTIARTL","KOTAKBANK","LT","AXISBANK","ASIANPAINT","MARUTI",
+            "WIPRO","ULTRACEMCO","NESTLEIND","TATAMOTORS","SUNPHARMA","TITAN",
+            "HCLTECH","BAJFINANCE","BAJAJFINSV","TECHM","NTPC","POWERGRID",
+            "ONGC","COALINDIA","ADANIENT","ADANIPORTS","JSWSTEEL","TATASTEEL",
+            "HINDALCO","VEDL","GRASIM","DIVISLAB","DRREDDY","CIPLA","APOLLOHOSP",
+            "EICHERMOT","HEROMOTOCO","BAJAJ-AUTO","M&M","TATACONSUM","BRITANNIA",
+            "DABUR","MARICO","PIDILITIND","BERGEPAINT","HAVELLS","VOLTAS",
+            "SIEMENS","ABB","CUMMINSIND","THERMAX","BHEL","BEL","HAL","IRCTC",
+            "DMART","NYKAA","ZOMATO","PAYTM","POLICYBZR","STARTUPIND",
+            "HDFCLIFE","SBILIFE","ICICIPRULI","GICRE","NIACL","MUTHOOTFIN",
+            "CHOLAFIN","BAJAJHLDNG","LICHSGFIN","PNBHOUSING","RECLTD","PFC",
+            "IRFC","HUDCO","NHPC","SJVN","TATAPOWER","ADANIGREEN","CESC",
+            "TORNTPOWER","JSWENERGY","INOXWIND","SUZLON","RPOWER","JPPOWER",
+            "ZYDUSLIFE","LUPIN","AUROPHARMA","TORNTPHARM","ALKEM","IPCALAB",
+            "NATCOPHARM","GRANULES","ABBOTINDIA","PFIZER","SANOFI","GLAXO",
+            "BIOCON","LAURUSLABS","DIVILAB","SUDARSCHEM","NAVINFLUOR",
+            "PIDILITIND","SRF","ATUL","DEEPAKNTR","TATACHEM","GNFC","GSFC",
+            "CHAMBLFERT","COROMANDEL","PIIND","RALLIS","BAYER","ASTRAL",
+            "SUPREMEIND","FINOLEX","PRINCEPIPE","APOLLOTYRE","MRF","BALKRISIND",
+            "CEATLTD","JKTYRE","MOTHERSON","MINDAIND","BHARATFORG","RAMKRISHNA",
+            "JINDALSAW","RATNAMANI","WELCORP","NPTC","NHPC","GMRAIRPORT",
+            "ZEEL","SUNTV","PVRINOX","INOXLEISUR","NAZARA","NETWORK18",
+            "TV18BRDCST","HATHWAY","DBCORP","JAGRAN","HMVL","SAREGAMA",
+            "MPHASIS","LTIM","COFORGE","PERSISTENT","KPITTECH","TATAELXSI",
+            "HEXAWARE","MASTEK","NIITTECH","ZENSAR","RATEGAIN","INTELLECT",
+            "TANLA","ROUTE","TTML","STLTECH","TEJASNET","RAILTEL",
+            "IRCON","RVNL","NBCC","ENGINERSIN","MTNL","BSNL",
+            "UNIONBANK","BANKBARODA","PNB","CANBK","IOB","UCOBANK",
+            "CENTRALBK","MAHABANK","BANDHANBNK","FEDERALBNK","IDFCFIRSTB",
+            "RBLBANK","DCBBANK","KTKBANK","LAKSHVILAS","CSB","UJJIVANSFB"
         ]
-        return fallback
+
+# ─── FETCH DATA VIA NSE API ───────────────────────────────
+def fetch_nse_history(symbol, period="6mo"):
+    """Fetch historical data from NSE India API."""
+    try:
+        session = requests.Session()
+        # First hit NSE homepage to get cookies
+        session.get("https://www.nseindia.com", headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        }, timeout=10)
+
+        today = date.today()
+        if period == "6mo":
+            from_date = today - timedelta(days=180)
+        elif period == "1y":
+            from_date = today - timedelta(days=365)
+        elif period == "2y":
+            from_date = today - timedelta(days=730)
+        else:
+            from_date = today - timedelta(days=180)
+
+        url = (
+            f"https://www.nseindia.com/api/historical/cm/equity"
+            f"?symbol={symbol}"
+            f"&series=[%22EQ%22]"
+            f"&from={from_date.strftime('%d-%m-%Y')}"
+            f"&to={today.strftime('%d-%m-%Y')}"
+        )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.nseindia.com/",
+        }
+        resp = session.get(url, headers=headers, timeout=15)
+        data = resp.json()
+
+        if "data" not in data or not data["data"]:
+            return None
+
+        records = data["data"]
+        df = pd.DataFrame(records)
+        df = df.rename(columns={
+            "CH_TIMESTAMP": "Date",
+            "CH_OPENING_PRICE": "Open",
+            "CH_TRADE_HIGH_PRICE": "High",
+            "CH_TRADE_LOW_PRICE": "Low",
+            "CH_CLOSING_PRICE": "Close",
+            "CH_TOT_TRADED_QTY": "Volume"
+        })
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.sort_values("Date").reset_index(drop=True)
+        df[["Open","High","Low","Close","Volume"]] = df[["Open","High","Low","Close","Volume"]].apply(pd.to_numeric, errors="coerce")
+        return df
+
+    except Exception as e:
+        return None
+
+def resample_to_weekly(daily_df):
+    """Convert daily OHLCV to weekly."""
+    try:
+        df = daily_df.set_index("Date")
+        weekly = df.resample("W").agg({
+            "Open": "first", "High": "max",
+            "Low": "min", "Close": "last", "Volume": "sum"
+        }).dropna()
+        return weekly.reset_index()
+    except:
+        return None
+
+def resample_to_monthly(daily_df):
+    """Convert daily OHLCV to monthly."""
+    try:
+        df = daily_df.set_index("Date")
+        monthly = df.resample("ME").agg({
+            "Open": "first", "High": "max",
+            "Low": "min", "Close": "last", "Volume": "sum"
+        }).dropna()
+        return monthly.reset_index()
+    except:
+        return None
+
+def fetch_data(symbol):
+    """Fetch all timeframes for a symbol."""
+    try:
+        # Daily 6 months
+        daily = fetch_nse_history(symbol, "6mo")
+        if daily is None or len(daily) < 60:
+            return None
+
+        # Weekly from daily
+        weekly = resample_to_weekly(daily)
+        if weekly is None or len(weekly) < 8:
+            return None
+
+        # Monthly from 2yr daily
+        daily_2y = fetch_nse_history(symbol, "2y")
+        if daily_2y is None or len(daily_2y) < 60:
+            return None
+        monthly = resample_to_monthly(daily_2y)
+        if monthly is None or len(monthly) < 3:
+            return None
+
+        # 1Hr — resample from daily (approximate using daily data)
+        # Note: NSE free API doesn't provide intraday; use daily as proxy
+        # For 1Hr SMA compression we use daily SMA as approximation
+        return {
+            "daily": daily,
+            "weekly": weekly,
+            "monthly": monthly,
+            "daily_2y": daily_2y
+        }
+    except Exception as e:
+        return None
 
 # ─── CPR CALCULATION ──────────────────────────────────────
 def calculate_cpr(high, low, close):
@@ -54,43 +203,8 @@ def calculate_cpr(high, low, close):
     return {"pivot": pivot, "bc": bc, "tc": tc,
             "r1": r1, "r2": r2, "s1": s1, "s2": s2}
 
-# ─── FETCH DATA ───────────────────────────────────────────
-def fetch_data(symbol):
-    try:
-        tk = yf.Ticker(symbol)
-
-        # Daily data — 6 months
-        daily = tk.history(period="6mo", interval="1d")
-        if daily.empty or len(daily) < 60:
-            return None
-
-        # Weekly data — 1 year
-        weekly = tk.history(period="1y", interval="1wk")
-        if weekly.empty or len(weekly) < 8:
-            return None
-
-        # Monthly data — 2 years
-        monthly = tk.history(period="2y", interval="1mo")
-        if monthly.empty or len(monthly) < 3:
-            return None
-
-        # 1Hr data — 60 days
-        hourly = tk.history(period="60d", interval="1h")
-        if hourly.empty or len(hourly) < 50:
-            return None
-
-        return {"daily": daily, "weekly": weekly,
-                "monthly": monthly, "hourly": hourly}
-    except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
-        return None
-
 # ─── SETUP 1: Monthly CPR Magnet ──────────────────────────
 def check_setup1(data, symbol):
-    """
-    Price between Daily 20 & 50 SMA (20 > 50)
-    + Price within 0.5%-1.5% of Monthly CPR
-    """
     try:
         daily   = data["daily"]
         monthly = data["monthly"]
@@ -99,66 +213,41 @@ def check_setup1(data, symbol):
         if close < MIN_PRICE:
             return None
 
-        # Daily SMAs
         sma20 = daily["Close"].rolling(20).mean().iloc[-1]
         sma50 = daily["Close"].rolling(50).mean().iloc[-1]
-
         if pd.isna(sma20) or pd.isna(sma50):
             return None
-
-        # Condition: 20 SMA > 50 SMA
         if sma20 <= sma50:
             return None
-
-        # Condition: Price between 20 and 50 SMA
-        price_between = (min(sma20, sma50) <= close <= max(sma20, sma50))
-        if not price_between:
+        if not (min(sma20, sma50) <= close <= max(sma20, sma50)):
             return None
 
-        # Monthly CPR (use previous completed month)
         prev_month = monthly.iloc[-2]
         cpr = calculate_cpr(prev_month["High"], prev_month["Low"], prev_month["Close"])
-
-        # Check proximity to any CPR level (BC, Pivot, TC)
         cpr_levels = {"BC": cpr["bc"], "Pivot": cpr["pivot"], "TC": cpr["tc"]}
-        nearest_level = None
-        nearest_name  = None
-        min_dist = float("inf")
 
+        nearest_level, nearest_name, min_dist = None, None, float("inf")
         for name, level in cpr_levels.items():
             dist = abs(close - level) / level
-            if CPR_BUFFER_LOW <= dist <= CPR_BUFFER_HIGH:
-                if dist < min_dist:
-                    min_dist      = dist
-                    nearest_level = level
-                    nearest_name  = name
+            if CPR_BUFFER_LOW <= dist <= CPR_BUFFER_HIGH and dist < min_dist:
+                min_dist, nearest_level, nearest_name = dist, level, name
 
         if nearest_level is None:
             return None
 
         volume = int(daily["Volume"].iloc[-1])
-
         return {
-            "symbol":  symbol.replace(".NS", ""),
-            "price":   round(close, 2),
-            "sma20":   round(sma20, 2),
-            "sma50":   round(sma50, 2),
-            "cpr_level": nearest_name,
-            "cpr_value": round(nearest_level, 2),
-            "cpr_dist":  round(min_dist * 100, 2),
-            "volume":  volume,
-            "setup":   "Setup 1 — Monthly CPR Magnet"
+            "symbol": symbol, "price": round(close, 2),
+            "sma20": round(sma20, 2), "sma50": round(sma50, 2),
+            "cpr_level": nearest_name, "cpr_value": round(nearest_level, 2),
+            "cpr_dist": round(min_dist * 100, 2), "volume": volume,
+            "setup": "Setup 1 — Monthly CPR Magnet"
         }
-    except Exception as e:
-        print(f"Setup1 error {symbol}: {e}")
+    except:
         return None
 
 # ─── SETUP 2: Weekly Level Watch ──────────────────────────
 def check_setup2(data, symbol):
-    """
-    Price below Previous Week Low
-    OR near Weekly S2 level (within 1%)
-    """
     try:
         daily  = data["daily"]
         weekly = data["weekly"]
@@ -167,25 +256,17 @@ def check_setup2(data, symbol):
         if close < MIN_PRICE:
             return None
 
-        # Previous week low (second last completed week)
         prev_week_low = weekly["Low"].iloc[-2]
-
-        # Weekly CPR (current week)
         curr_week = weekly.iloc[-1]
         w_cpr = calculate_cpr(curr_week["High"], curr_week["Low"], curr_week["Close"])
         weekly_s2 = w_cpr["s2"]
 
-        # Condition A: Close below previous week low
         below_pwl = close < prev_week_low
-
-        # Condition B: Near Weekly S2 (within 1%)
-        s2_dist = abs(close - weekly_s2) / weekly_s2
-        near_s2 = s2_dist <= WEEKLY_S2_BUFFER
+        s2_dist   = abs(close - weekly_s2) / weekly_s2
+        near_s2   = s2_dist <= WEEKLY_S2_BUFFER
 
         if not (below_pwl or near_s2):
             return None
-
-        volume = int(daily["Volume"].iloc[-1])
 
         trigger = []
         if below_pwl:
@@ -193,256 +274,217 @@ def check_setup2(data, symbol):
         if near_s2:
             trigger.append(f"Near Weekly S2 ₹{round(weekly_s2,2)} ({round(s2_dist*100,2)}% away)")
 
+        volume = int(daily["Volume"].iloc[-1])
         return {
-            "symbol":   symbol.replace(".NS", ""),
-            "price":    round(close, 2),
-            "pwl":      round(prev_week_low, 2),
-            "weekly_s2":round(weekly_s2, 2),
-            "trigger":  " | ".join(trigger),
-            "volume":   volume,
-            "setup":    "Setup 2 — Weekly Level Watch"
+            "symbol": symbol, "price": round(close, 2),
+            "pwl": round(prev_week_low, 2), "weekly_s2": round(weekly_s2, 2),
+            "trigger": " | ".join(trigger), "volume": volume,
+            "setup": "Setup 2 — Weekly Level Watch"
         }
-    except Exception as e:
-        print(f"Setup2 error {symbol}: {e}")
+    except:
         return None
 
 # ─── SETUP 3: Monthly R2 Compression ──────────────────────
 def check_setup3(data, symbol):
-    """
-    Price above Monthly R1 and near Monthly R2
-    + 1Hr 20 SMA and 1Hr 50 SMA close to each other (within 0.5%-1%)
-    """
     try:
         daily   = data["daily"]
         monthly = data["monthly"]
-        hourly  = data["hourly"]
 
         close = daily["Close"].iloc[-1]
         if close < MIN_PRICE:
             return None
 
-        # Monthly CPR levels
         prev_month = monthly.iloc[-2]
         m_cpr = calculate_cpr(prev_month["High"], prev_month["Low"], prev_month["Close"])
         monthly_r1 = m_cpr["r1"]
         monthly_r2 = m_cpr["r2"]
 
-        # Condition: Price above Monthly R1
         if close <= monthly_r1:
             return None
 
-        # Condition: Price near Monthly R2 (within 1.5%)
         r2_dist = abs(close - monthly_r2) / monthly_r2
         if r2_dist > MONTHLY_R2_BUFFER:
             return None
 
-        # 1Hr SMA compression
-        h_sma20 = hourly["Close"].rolling(20).mean().iloc[-1]
-        h_sma50 = hourly["Close"].rolling(50).mean().iloc[-1]
-
-        if pd.isna(h_sma20) or pd.isna(h_sma50):
+        # Use daily SMA as 1Hr SMA approximation
+        sma20 = daily["Close"].rolling(20).mean().iloc[-1]
+        sma50 = daily["Close"].rolling(50).mean().iloc[-1]
+        if pd.isna(sma20) or pd.isna(sma50):
             return None
 
-        sma_diff = abs(h_sma20 - h_sma50) / h_sma50
+        sma_diff = abs(sma20 - sma50) / sma50
         if sma_diff > SMA_BUFFER:
             return None
 
         volume = int(daily["Volume"].iloc[-1])
-
         return {
-            "symbol":    symbol.replace(".NS", ""),
-            "price":     round(close, 2),
-            "monthly_r1":round(monthly_r1, 2),
-            "monthly_r2":round(monthly_r2, 2),
-            "r2_dist":   round(r2_dist * 100, 2),
-            "h_sma20":   round(h_sma20, 2),
-            "h_sma50":   round(h_sma50, 2),
-            "sma_diff":  round(sma_diff * 100, 2),
-            "volume":    volume,
-            "setup":     "Setup 3 — Monthly R2 Compression"
+            "symbol": symbol, "price": round(close, 2),
+            "monthly_r1": round(monthly_r1, 2), "monthly_r2": round(monthly_r2, 2),
+            "r2_dist": round(r2_dist * 100, 2),
+            "sma20": round(sma20, 2), "sma50": round(sma50, 2),
+            "sma_diff": round(sma_diff * 100, 2), "volume": volume,
+            "setup": "Setup 3 — Monthly R2 Compression"
         }
-    except Exception as e:
-        print(f"Setup3 error {symbol}: {e}")
+    except:
         return None
 
-# ─── TRADINGVIEW LINK ─────────────────────────────────────
-def tv_links(sym):
-    s = sym.replace(".NS", "")
+# ─── TRADINGVIEW LINKS ────────────────────────────────────
+def tv_links_discord(sym):
     return (
-        f"[Daily](https://www.tradingview.com/chart/?symbol=NSE:{s}&interval=D) | "
-        f"[Weekly](https://www.tradingview.com/chart/?symbol=NSE:{s}&interval=W) | "
-        f"[1Hr](https://www.tradingview.com/chart/?symbol=NSE:{s}&interval=60)"
+        f"[Daily](https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval=D) | "
+        f"[Weekly](https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval=W) | "
+        f"[1Hr](https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval=60)"
     )
 
 def tv_links_telegram(sym):
-    s = sym.replace(".NS", "")
     base = "https://www.tradingview.com/chart/?symbol=NSE:"
     return (
-        f"📊 Daily: {base}{s}&interval=D\n"
-        f"📊 Weekly: {base}{s}&interval=W\n"
-        f"📊 1Hr: {base}{s}&interval=60"
+        f"📊 [Daily]({base}{sym}&interval=D) | "
+        f"[Weekly]({base}{sym}&interval=W) | "
+        f"[1Hr]({base}{sym}&interval=60)"
     )
 
-# ─── FORMAT DISCORD MESSAGE ───────────────────────────────
-def format_discord(results1, results2, results3, scan_time, is_manual):
-    now_str  = scan_time.strftime("%d %b %Y | %I:%M %p IST")
-    mode_tag = "⚠️ Manual Scan — Market Closed\n" if is_manual else ""
+# ─── FORMAT DISCORD ───────────────────────────────────────
+def format_discord(r1, r2, r3, now):
+    now_str = now.strftime("%d %b %Y | %I:%M %p IST")
+    msgs = []
 
-    lines = []
-    lines.append(f"```")
-    lines.append(f"{'='*50}")
-    lines.append(f"  🔍 KRATOS SCREENER — HIGH PROBABILITY SETUPS")
-    lines.append(f"  {now_str}")
-    if is_manual:
-        lines.append(f"  ⚠️  Manual Scan — Market Closed")
-    lines.append(f"{'='*50}")
-    lines.append(f"```")
+    header = (
+        f"```\n{'='*50}\n"
+        f"  🔍 KRATOS SCREENER — DAILY SCAN\n"
+        f"  {now_str}\n"
+        f"{'='*50}\n```"
+    )
+    msgs.append(header)
 
-    # Setup 1
-    lines.append(f"**📌 SETUP 1 — Monthly CPR Magnet** ({len(results1)} stocks)\n")
-    if results1:
-        for r in results1[:10]:  # Discord limit safety
-            lines.append(
-                f"**{r['symbol']}** — ₹{r['price']}\n"
-                f"> CPR {r['cpr_level']}: ₹{r['cpr_value']} ({r['cpr_dist']}% away)\n"
-                f"> D20 SMA: ₹{r['sma20']} | D50 SMA: ₹{r['sma50']}\n"
-                f"> Vol: {r['volume']:,}\n"
-                f"> 📊 {tv_links(r['symbol'])}\n"
-            )
-    else:
-        lines.append("_No stocks matched today_\n")
+    def section(title, results, fields):
+        lines = [f"**📌 {title}** — {len(results)} stocks\n"]
+        if results:
+            for r in results[:15]:
+                lines.append(f"**{r['symbol']}** — ₹{r['price']}")
+                for f in fields(r):
+                    lines.append(f"> {f}")
+                lines.append(f"> Vol: {r['volume']:,}")
+                lines.append(f"> 📊 {tv_links_discord(r['symbol'])}")
+                lines.append("")
+        else:
+            lines.append("_No stocks matched today_\n")
+        lines.append("─" * 40)
+        return "\n".join(lines)
 
-    lines.append("─" * 40)
+    msgs.append(section(
+        "Setup 1 — Monthly CPR Magnet", r1,
+        lambda r: [
+            f"CPR {r['cpr_level']}: ₹{r['cpr_value']} ({r['cpr_dist']}% away)",
+            f"D20 SMA: ₹{r['sma20']} | D50 SMA: ₹{r['sma50']}"
+        ]
+    ))
+    msgs.append(section(
+        "Setup 2 — Weekly Level Watch", r2,
+        lambda r: [
+            f"Trigger: {r['trigger']}",
+            f"PWL: ₹{r['pwl']} | Weekly S2: ₹{r['weekly_s2']}"
+        ]
+    ))
+    msgs.append(section(
+        "Setup 3 — Monthly R2 Compression", r3,
+        lambda r: [
+            f"Monthly R1: ₹{r['monthly_r1']} | R2: ₹{r['monthly_r2']} ({r['r2_dist']}% away)",
+            f"SMA20: ₹{r['sma20']} | SMA50: ₹{r['sma50']} (diff: {r['sma_diff']}%)"
+        ]
+    ))
 
-    # Setup 2
-    lines.append(f"\n**📌 SETUP 2 — Weekly Level Watch** ({len(results2)} stocks)\n")
-    if results2:
-        for r in results2[:10]:
-            lines.append(
-                f"**{r['symbol']}** — ₹{r['price']}\n"
-                f"> Trigger: {r['trigger']}\n"
-                f"> PWL: ₹{r['pwl']} | Weekly S2: ₹{r['weekly_s2']}\n"
-                f"> Vol: {r['volume']:,}\n"
-                f"> 📊 {tv_links(r['symbol'])}\n"
-            )
-    else:
-        lines.append("_No stocks matched today_\n")
+    total = len(r1) + len(r2) + len(r3)
+    msgs.append(f"```\nTotal Alerts : {total}\nNext Scan    : Tomorrow 6:00 PM IST\n{'='*50}\n```")
+    return msgs
 
-    lines.append("─" * 40)
+# ─── FORMAT TELEGRAM ──────────────────────────────────────
+def format_telegram(r1, r2, r3, now):
+    now_str = now.strftime("%d %b %Y | %I:%M %p IST")
+    lines   = [
+        f"🔍 *KRATOS SCREENER — DAILY SCAN*",
+        f"📅 {now_str}", ""
+    ]
 
-    # Setup 3
-    lines.append(f"\n**📌 SETUP 3 — Monthly R2 Compression** ({len(results3)} stocks)\n")
-    if results3:
-        for r in results3[:10]:
-            lines.append(
-                f"**{r['symbol']}** — ₹{r['price']}\n"
-                f"> Monthly R1: ₹{r['monthly_r1']} | R2: ₹{r['monthly_r2']} ({r['r2_dist']}% away)\n"
-                f"> 1Hr SMA20: ₹{r['h_sma20']} | SMA50: ₹{r['h_sma50']} (diff: {r['sma_diff']}%)\n"
-                f"> Vol: {r['volume']:,}\n"
-                f"> 📊 {tv_links(r['symbol'])}\n"
-            )
-    else:
-        lines.append("_No stocks matched today_\n")
-
-    total = len(results1) + len(results2) + len(results3)
-    lines.append(f"\n```")
-    lines.append(f"Total Alerts : {total}")
-    lines.append(f"Next Scan    : Every 15 mins during market hours")
-    lines.append(f"{'='*50}")
-    lines.append(f"```")
-
-    return "\n".join(lines)
-
-# ─── FORMAT TELEGRAM MESSAGE ──────────────────────────────
-def format_telegram(results1, results2, results3, scan_time, is_manual):
-    now_str = scan_time.strftime("%d %b %Y | %I:%M %p IST")
-    lines   = []
-    lines.append(f"🔍 *KRATOS SCREENER*")
-    lines.append(f"📅 {now_str}")
-    if is_manual:
-        lines.append(f"⚠️ Manual Scan — Market Closed")
-    lines.append("")
-
-    def add_setup(title, results):
+    def section(title, results, fields):
         lines.append(f"*{title}* — {len(results)} stocks")
         lines.append("─────────────────────")
         if results:
-            for r in results[:5]:  # Top 5 per setup on Telegram
+            for r in results[:5]:
                 lines.append(f"*{r['symbol']}* — ₹{r['price']}")
-                if "cpr_level" in r:
-                    lines.append(f"CPR {r['cpr_level']}: ₹{r['cpr_value']} ({r['cpr_dist']}% away)")
-                    lines.append(f"D20: ₹{r['sma20']} | D50: ₹{r['sma50']}")
-                elif "trigger" in r:
-                    lines.append(f"Trigger: {r['trigger']}")
-                    lines.append(f"PWL: ₹{r['pwl']} | W\\_S2: ₹{r['weekly_s2']}")
-                elif "monthly_r2" in r:
-                    lines.append(f"M\\_R1: ₹{r['monthly_r1']} | M\\_R2: ₹{r['monthly_r2']}")
-                    lines.append(f"1Hr SMA diff: {r['sma_diff']}%")
+                for f in fields(r):
+                    lines.append(f)
                 lines.append(f"Vol: {r['volume']:,}")
                 lines.append(tv_links_telegram(r['symbol']))
                 lines.append("")
         else:
-            lines.append("No stocks matched")
-        lines.append("")
+            lines.append("No stocks matched\n")
 
-    add_setup("📌 Setup 1 — Monthly CPR Magnet", results1)
-    add_setup("📌 Setup 2 — Weekly Level Watch", results2)
-    add_setup("📌 Setup 3 — Monthly R2 Compression", results3)
+    section(
+        "📌 Setup 1 — Monthly CPR Magnet", r1,
+        lambda r: [
+            f"CPR {r['cpr_level']}: ₹{r['cpr_value']} ({r['cpr_dist']}% away)",
+            f"D20: ₹{r['sma20']} | D50: ₹{r['sma50']}"
+        ]
+    )
+    section(
+        "📌 Setup 2 — Weekly Level Watch", r2,
+        lambda r: [f"Trigger: {r['trigger']}", f"PWL: ₹{r['pwl']} | W\\_S2: ₹{r['weekly_s2']}"]
+    )
+    section(
+        "📌 Setup 3 — Monthly R2 Compression", r3,
+        lambda r: [
+            f"M\\_R1: ₹{r['monthly_r1']} | M\\_R2: ₹{r['monthly_r2']} ({r['r2_dist']}% away)",
+            f"SMA diff: {r['sma_diff']}%"
+        ]
+    )
 
-    total = len(results1) + len(results2) + len(results3)
-    lines.append(f"✅ Total Alerts: {total}")
+    total = len(r1) + len(r2) + len(r3)
+    lines.append(f"✅ *Total Alerts: {total}*")
+    lines.append(f"⏰ Next scan: Tomorrow 6:00 PM IST")
     return "\n".join(lines)
 
 # ─── SEND DISCORD ─────────────────────────────────────────
-def send_discord(message):
-    # Discord has 2000 char limit — split if needed
-    chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
-    for chunk in chunks:
-        payload = {"content": chunk}
-        r = requests.post(DISCORD_WEBHOOK, json=payload)
-        print(f"Discord: {r.status_code}")
+def send_discord(messages):
+    for msg in messages:
+        chunks = [msg[i:i+1900] for i in range(0, len(msg), 1900)]
+        for chunk in chunks:
+            r = requests.post(DISCORD_WEBHOOK, json={"content": chunk})
+            print(f"Discord: {r.status_code}")
+            time.sleep(0.5)
 
 # ─── SEND TELEGRAM ────────────────────────────────────────
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    # Telegram has 4096 char limit — split if needed
     chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
     for chunk in chunks:
-        payload = {
-            "chat_id":    TELEGRAM_CHAT_ID,
-            "text":       chunk,
-            "parse_mode": "Markdown"
-        }
-        r = requests.post(url, json=payload)
+        r = requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        })
         print(f"Telegram: {r.status_code}")
+        time.sleep(0.5)
 
 # ─── MAIN ─────────────────────────────────────────────────
 def main():
     now_ist = datetime.now(IST)
     print(f"\n{'='*50}")
-    print(f"Kratos Screener started at {now_ist.strftime('%d %b %Y %I:%M %p IST')}")
-    print(f"{'='*50}")
+    print(f"Kratos Screener started: {now_ist.strftime('%d %b %Y %I:%M %p IST')}")
+    print(f"{'='*50}\n")
 
-    # Detect if market is open
-    market_open  = now_ist.replace(hour=9,  minute=15, second=0, microsecond=0)
-    market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
-    is_weekend   = now_ist.weekday() >= 5
-    is_manual    = is_weekend or not (market_open <= now_ist <= market_close)
-
-    print(f"Mode: {'MANUAL (Market Closed)' if is_manual else 'AUTO (Market Open)'}")
-
-    # Fetch all NSE symbols
-    print("\nFetching NSE symbol list...")
     symbols = get_nse_symbols()
-    print(f"Total symbols to scan: {len(symbols)}")
+    print(f"Scanning {len(symbols)} NSE stocks...\n")
 
     results1, results2, results3 = [], [], []
-    scanned = 0
+    scanned, skipped = 0, 0
 
     for symbol in symbols:
         try:
             data = fetch_data(symbol)
             if data is None:
+                skipped += 1
                 continue
 
             r1 = check_setup1(data, symbol)
@@ -454,11 +496,13 @@ def main():
             if r3: results3.append(r3)
 
             scanned += 1
-            if scanned % 50 == 0:
-                print(f"Scanned {scanned}/{len(symbols)} stocks...")
+            if scanned % 25 == 0:
+                print(f"Progress: {scanned} scanned, {skipped} skipped...")
+
+            time.sleep(0.3)  # Be polite to NSE API
 
         except Exception as e:
-            print(f"Error processing {symbol}: {e}")
+            skipped += 1
             continue
 
     # Sort by volume descending
@@ -466,22 +510,22 @@ def main():
     results2.sort(key=lambda x: x["volume"], reverse=True)
     results3.sort(key=lambda x: x["volume"], reverse=True)
 
-    total = len(results1) + len(results2) + len(results3)
-    print(f"\nScan complete — {scanned} stocks scanned")
+    print(f"\n{'='*50}")
+    print(f"Scan Complete!")
+    print(f"Scanned: {scanned} | Skipped: {skipped}")
     print(f"Setup 1: {len(results1)} | Setup 2: {len(results2)} | Setup 3: {len(results3)}")
-    print(f"Total alerts: {total}")
+    print(f"{'='*50}\n")
 
-    # Send alerts
-    discord_msg  = format_discord(results1, results2, results3, now_ist, is_manual)
-    telegram_msg = format_telegram(results1, results2, results3, now_ist, is_manual)
+    discord_msgs = format_discord(results1, results2, results3, now_ist)
+    telegram_msg = format_telegram(results1, results2, results3, now_ist)
 
-    print("\nSending Discord alert...")
-    send_discord(discord_msg)
+    print("Sending to Discord...")
+    send_discord(discord_msgs)
 
-    print("Sending Telegram alert...")
+    print("Sending to Telegram...")
     send_telegram(telegram_msg)
 
-    print("\nDone! ✅")
+    print("\n✅ Done!")
 
 if __name__ == "__main__":
     main()
