@@ -2,19 +2,14 @@ name: Kratos Stock Screener
 
 on:
   schedule:
-    - cron: '15,30,45 3 * * 1-5'
-    - cron: '0,15,30,45 4 * * 1-5'
-    - cron: '0,15,30,45 5 * * 1-5'
-    - cron: '0,15,30,45 6 * * 1-5'
-    - cron: '0,15,30,45 7 * * 1-5'
-    - cron: '0,15,30,45 8 * * 1-5'
-    - cron: '0,15,30,45 9 * * 1-5'
-    - cron: '0 10 * * 1-5'
-  workflow_dispatch:
+    # Every day at 6:00 PM IST = 12:30 PM UTC, Mon-Fri
+    - cron: '30 12 * * 1-5'
+  workflow_dispatch:  # Manual trigger button
 
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout Repository
