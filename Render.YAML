@@ -1,0 +1,45 @@
+services:
+  # ─── SETUP 1 SCREENER ────────────────────────────────────
+  - type: cron
+    name: kratos-setup1-screener
+    runtime: python
+    schedule: "30 11 * * 1-5"   # 5:00 PM IST = 11:30 AM UTC, Mon–Fri
+    buildCommand: pip install -r requirements.txt
+    startCommand: python setup1_scanner.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false          # Set manually in Render dashboard
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DISCORD_WEBHOOK
+        sync: false
+
+  # ─── SETUP 2 SCREENER ────────────────────────────────────
+  - type: cron
+    name: kratos-setup2-screener
+    runtime: python
+    schedule: "30 11 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python setup2_scanner.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DISCORD_WEBHOOK
+        sync: false
+
+  # ─── SETUP 3 SCREENER ────────────────────────────────────
+  - type: cron
+    name: kratos-setup3-screener
+    runtime: python
+    schedule: "30 11 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python setup3_scanner.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DISCORD_WEBHOOK
+        sync: false
