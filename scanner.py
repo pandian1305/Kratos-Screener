@@ -11,11 +11,14 @@ TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 DISCORD_WEBHOOK  = os.environ["DISCORD_WEBHOOK"]
 
-MIN_PRICE         = 35
+MIN_PRICE         = 30      # Minimum price filter
+MAX_PRICE         = 600     # Maximum price filter
+MIN_VOLUME        = 100000  # Minimum volume filter
 CPR_BUFFER_LOW    = 0.005
 CPR_BUFFER_HIGH   = 0.015
 SMA_BUFFER        = 0.01
-WEEKLY_S2_BUFFER  = 0.01
+WEEKLY_S2_BUFFER  = 0.01    # Within 1% of Weekly S2
+MONTHLY_S2_BUFFER = 0.01    # Within 1% of Monthly S2
 MONTHLY_R2_BUFFER = 0.015
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -205,8 +208,10 @@ def calculate_cpr(high, low, close):
 def check_setup1(data, symbol):
     try:
         daily, monthly = data["daily"], data["monthly"]
-        close = daily["Close"].iloc[-1]
-        if close < MIN_PRICE: return None
+        close  = daily["Close"].iloc[-1]
+        volume = int(daily["Volume"].iloc[-1])
+        if not (MIN_PRICE <= close <= MAX_PRICE): return None
+        if volume < MIN_VOLUME: return None
 
         sma20 = daily["Close"].rolling(20).mean().iloc[-1]
         sma50 = daily["Close"].rolling(50).mean().iloc[-1]
@@ -228,7 +233,7 @@ def check_setup1(data, symbol):
             "sma20":round(sma20,2),"sma50":round(sma50,2),
             "cpr_level":name,"cpr_value":round(nearest,2),
             "cpr_dist":round(min_dist*100,2),
-            "volume":int(daily["Volume"].iloc[-1]),
+            "volume":volume,
             "setup":"Setup 1"
         }
     except: return None
@@ -237,27 +242,34 @@ def check_setup1(data, symbol):
 def check_setup2(data, symbol):
     try:
         daily, weekly = data["daily"], data["weekly"]
-        close = daily["Close"].iloc[-1]
-        if close < MIN_PRICE: return None
+        close  = daily["Close"].iloc[-1]
+        volume = int(daily["Volume"].iloc[-1])
+        if not (MIN_PRICE <= close <= MAX_PRICE): return None
+        if volume < MIN_VOLUME: return None
 
-        pwl = weekly["Low"].iloc[-2]
         cw  = weekly.iloc[-1]
-        ws2 = calculate_cpr(cw["High"],cw["Low"],cw["Close"])["s2"]
+        ws2 = calculate_cpr(cw["High"], cw["Low"], cw["Close"])["s2"]
 
-        below_pwl = close < pwl
-        s2_dist   = abs(close - ws2) / ws2
-        near_s2   = s2_dist <= WEEKLY_S2_BUFFER
-        if not (below_pwl or near_s2): return None
+        # Condition: price near Weekly S2 (within 1%) OR below Weekly S2
+        s2_dist  = (close - ws2) / ws2   # negative = below S2
+        near_s2  = abs(s2_dist) <= WEEKLY_S2_BUFFER
+        below_s2 = close < ws2
 
-        trigger = []
-        if below_pwl: trigger.append(f"Below PWL ₹{round(pwl,2)}")
-        if near_s2:   trigger.append(f"Near W\\_S2 ₹{round(ws2,2)} ({round(s2_dist*100,2)}% away)")
+        if not (near_s2 or below_s2): return None
+
+        if below_s2 and not near_s2:
+            trigger = f"Below W\\_S2 ₹{round(ws2,2)} ({round(abs(s2_dist)*100,2)}% below)"
+        elif near_s2 and not below_s2:
+            trigger = f"Near W\\_S2 ₹{round(ws2,2)} ({round(abs(s2_dist)*100,2)}% away)"
+        else:
+            trigger = f"At W\\_S2 ₹{round(ws2,2)}"
 
         return {
             "symbol":symbol,"price":round(close,2),
-            "pwl":round(pwl,2),"weekly_s2":round(ws2,2),
-            "trigger":" | ".join(trigger),
-            "volume":int(daily["Volume"].iloc[-1]),
+            "weekly_s2":round(ws2,2),
+            "trigger":trigger,
+            "s2_dist":round(abs(s2_dist)*100,2),
+            "volume":volume,
             "setup":"Setup 2"
         }
     except: return None
@@ -266,8 +278,10 @@ def check_setup2(data, symbol):
 def check_setup3(data, symbol):
     try:
         daily, monthly = data["daily"], data["monthly"]
-        close = daily["Close"].iloc[-1]
-        if close < MIN_PRICE: return None
+        close  = daily["Close"].iloc[-1]
+        volume = int(daily["Volume"].iloc[-1])
+        if not (MIN_PRICE <= close <= MAX_PRICE): return None
+        if volume < MIN_VOLUME: return None
 
         pm   = monthly.iloc[-2]
         cpr  = calculate_cpr(pm["High"],pm["Low"],pm["Close"])
@@ -288,8 +302,44 @@ def check_setup3(data, symbol):
             "r2_dist":round(r2_dist*100,2),
             "sma20":round(sma20,2),"sma50":round(sma50,2),
             "sma_diff":round(sma_diff*100,2),
-            "volume":int(daily["Volume"].iloc[-1]),
+            "volume":volume,
             "setup":"Setup 3"
+        }
+    except: return None
+
+# ─── SETUP 4: Monthly S2 Level Watch ──────────────────────
+def check_setup4(data, symbol):
+    """Price near Monthly S2 (within 1%) OR below Monthly S2."""
+    try:
+        daily, monthly = data["daily"], data["monthly"]
+        close  = daily["Close"].iloc[-1]
+        volume = int(daily["Volume"].iloc[-1])
+        if not (MIN_PRICE <= close <= MAX_PRICE): return None
+        if volume < MIN_VOLUME: return None
+
+        pm  = monthly.iloc[-2]
+        ms2 = calculate_cpr(pm["High"], pm["Low"], pm["Close"])["s2"]
+
+        s2_dist  = (close - ms2) / ms2   # negative = below S2
+        near_s2  = abs(s2_dist) <= MONTHLY_S2_BUFFER
+        below_s2 = close < ms2
+
+        if not (near_s2 or below_s2): return None
+
+        if below_s2 and not near_s2:
+            trigger = f"Below M\\_S2 ₹{round(ms2,2)} ({round(abs(s2_dist)*100,2)}% below)"
+        elif near_s2 and not below_s2:
+            trigger = f"Near M\\_S2 ₹{round(ms2,2)} ({round(abs(s2_dist)*100,2)}% away)"
+        else:
+            trigger = f"At M\\_S2 ₹{round(ms2,2)}"
+
+        return {
+            "symbol":symbol,"price":round(close,2),
+            "monthly_s2":round(ms2,2),
+            "trigger":trigger,
+            "s2_dist":round(abs(s2_dist)*100,2),
+            "volume":volume,
+            "setup":"Setup 4"
         }
     except: return None
 
@@ -303,13 +353,14 @@ def tv_telegram(sym):
     return f"[D]({b}D) | [W]({b}W) | [1H]({b}60)"
 
 # ─── FORMAT DISCORD ───────────────────────────────────────
-def format_discord(r1, r2, r3, now):
+def format_discord(r1, r2, r3, r4, now):
     now_str = now.strftime("%d %b %Y | %I:%M %p IST")
     msgs = []
     msgs.append(
         f"```\n{'='*48}\n"
         f"  🔍 KRATOS SCREENER — DAILY SCAN\n"
         f"  {now_str}\n"
+        f"  Price: ₹30–₹600 | Vol > 1,00,000\n"
         f"{'='*48}\n```"
     )
 
@@ -330,21 +381,25 @@ def format_discord(r1, r2, r3, now):
     msgs.append(section("Setup 1 — Monthly CPR Magnet", r1,
         lambda r: [f"CPR {r['cpr_level']}: ₹{r['cpr_value']} ({r['cpr_dist']}% away)",
                    f"D20: ₹{r['sma20']} | D50: ₹{r['sma50']}"]))
-    msgs.append(section("Setup 2 — Weekly Level Watch", r2,
+    msgs.append(section("Setup 2 — Weekly S2 Watch", r2,
         lambda r: [f"Trigger: {r['trigger']}",
-                   f"PWL: ₹{r['pwl']} | W\\_S2: ₹{r['weekly_s2']}"]))
+                   f"Weekly S2: ₹{r['weekly_s2']}"]))
     msgs.append(section("Setup 3 — Monthly R2 Compression", r3,
         lambda r: [f"R1: ₹{r['monthly_r1']} | R2: ₹{r['monthly_r2']} ({r['r2_dist']}% away)",
                    f"SMA20: ₹{r['sma20']} | SMA50: ₹{r['sma50']} (diff: {r['sma_diff']}%)"]))
+    msgs.append(section("Setup 4 — Monthly S2 Watch", r4,
+        lambda r: [f"Trigger: {r['trigger']}",
+                   f"Monthly S2: ₹{r['monthly_s2']}"]))
 
-    total = len(r1)+len(r2)+len(r3)
+    total = len(r1)+len(r2)+len(r3)+len(r4)
     msgs.append(f"```\nTotal Alerts : {total}\nNext Scan    : Tomorrow 6:00 PM IST\n{'='*48}\n```")
     return msgs
 
 # ─── FORMAT TELEGRAM ──────────────────────────────────────
-def format_telegram(r1, r2, r3, now):
+def format_telegram(r1, r2, r3, r4, now):
     now_str = now.strftime("%d %b %Y | %I:%M %p IST")
-    lines = [f"🔍 *KRATOS SCREENER*", f"📅 {now_str}", ""]
+    lines = [f"🔍 *KRATOS SCREENER*", f"📅 {now_str}",
+             f"💰 ₹30–₹600 | Vol > 1,00,000", ""]
 
     def section(title, results, detail_fn):
         lines.append(f"*{title}* — {len(results)} stocks")
@@ -362,14 +417,17 @@ def format_telegram(r1, r2, r3, now):
     section("📌 Setup 1 — Monthly CPR Magnet", r1,
         lambda r: [f"CPR {r['cpr_level']}: ₹{r['cpr_value']} ({r['cpr_dist']}% away)",
                    f"D20: ₹{r['sma20']} | D50: ₹{r['sma50']}"])
-    section("📌 Setup 2 — Weekly Level Watch", r2,
+    section("📌 Setup 2 — Weekly S2 Watch", r2,
         lambda r: [f"Trigger: {r['trigger']}",
-                   f"PWL: ₹{r['pwl']} | W\\_S2: ₹{r['weekly_s2']}"])
+                   f"Weekly S2: ₹{r['weekly_s2']}"])
     section("📌 Setup 3 — Monthly R2 Compression", r3,
         lambda r: [f"R1: ₹{r['monthly_r1']} | R2: ₹{r['monthly_r2']} ({r['r2_dist']}% away)",
                    f"SMA diff: {r['sma_diff']}%"])
+    section("📌 Setup 4 — Monthly S2 Watch", r4,
+        lambda r: [f"Trigger: {r['trigger']}",
+                   f"Monthly S2: ₹{r['monthly_s2']}"])
 
-    total = len(r1)+len(r2)+len(r3)
+    total = len(r1)+len(r2)+len(r3)+len(r4)
     lines += [f"✅ *Total: {total} alerts*", "⏰ Next: Tomorrow 6 PM IST"]
     return "\n".join(lines)
 
@@ -401,7 +459,7 @@ def main():
     symbols = get_nse_symbols()
     print(f"Scanning {len(symbols)} NSE stocks...\n")
 
-    r1, r2, r3 = [], [], []
+    r1, r2, r3, r4 = [], [], [], []
     scanned = skipped = 0
 
     for symbol in symbols:
@@ -414,15 +472,17 @@ def main():
             s1 = check_setup1(data, symbol)
             s2 = check_setup2(data, symbol)
             s3 = check_setup3(data, symbol)
+            s4 = check_setup4(data, symbol)
 
             if s1: r1.append(s1)
             if s2: r2.append(s2)
             if s3: r3.append(s3)
+            if s4: r4.append(s4)
 
             scanned += 1
             if scanned % 25 == 0:
                 print(f"  ✓ {scanned} scanned | {skipped} skipped | "
-                      f"S1:{len(r1)} S2:{len(r2)} S3:{len(r3)}")
+                      f"S1:{len(r1)} S2:{len(r2)} S3:{len(r3)} S4:{len(r4)}")
 
             time.sleep(0.2)
 
@@ -432,16 +492,17 @@ def main():
     r1.sort(key=lambda x: x["volume"], reverse=True)
     r2.sort(key=lambda x: x["volume"], reverse=True)
     r3.sort(key=lambda x: x["volume"], reverse=True)
+    r4.sort(key=lambda x: x["volume"], reverse=True)
 
     print(f"\n{'='*50}")
     print(f"Scan Complete! Scanned:{scanned} Skipped:{skipped}")
-    print(f"Setup1:{len(r1)} Setup2:{len(r2)} Setup3:{len(r3)}")
+    print(f"S1:{len(r1)} S2:{len(r2)} S3:{len(r3)} S4:{len(r4)}")
     print(f"{'='*50}\n")
 
-    send_discord(format_discord(r1, r2, r3, now_ist))
+    send_discord(format_discord(r1, r2, r3, r4, now_ist))
     print("Discord sent ✅")
 
-    send_telegram(format_telegram(r1, r2, r3, now_ist))
+    send_telegram(format_telegram(r1, r2, r3, r4, now_ist))
     print("Telegram sent ✅\nDone!")
 
 if __name__ == "__main__":
