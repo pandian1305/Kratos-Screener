@@ -262,12 +262,10 @@ def calc_cpr(high, low, close):
 
 # ─── TRADINGVIEW LINKS ────────────────────────────────────
 def tv_discord(sym):
-    b = f"https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval="
-    return f"[Daily]({b}D) | [Weekly]({b}W) | [1Hr]({b}60)"
+    return f"[Chart](https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval=D)"
 
 def tv_telegram(sym):
-    b = f"https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval="
-    return f"[D]({b}D) | [W]({b}W) | [1H]({b}60)"
+    return f"[Chart](https://www.tradingview.com/chart/?symbol=NSE:{sym}&interval=D)"
 
 
 # ─── SEND HELPERS ─────────────────────────────────────────
