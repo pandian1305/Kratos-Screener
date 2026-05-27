@@ -63,6 +63,27 @@ def check(symbol, daily):
     except: return None
 
 
+def save_and_send_csv(results, now):
+    """Save matched symbols to CSV and send via Telegram."""
+    if not results:
+        return
+    df = pd.DataFrame([{"Symbol": r["symbol"]} for r in results])
+    csv_path = f"/tmp/setup1_{now.strftime('%Y%m%d')}.csv"
+    df.to_csv(csv_path, index=False)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    try:
+        import requests as _req
+        with open(csv_path, "rb") as f:
+            _req.post(url, data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "caption": f"📋 Setup 1 Symbols — {now.strftime('%d %b %Y')} ({len(results)} stocks)"
+            }, files={"document": (f"setup1_{now.strftime('%Y%m%d')}.csv", f, "text/csv")}, timeout=15)
+        print(f"✅ CSV sent to Telegram ({len(results)} symbols)")
+    except Exception as e:
+        print(f"CSV Telegram send failed: {e}")
+
+
 def send_alerts(results, now):
     now_str = now.strftime("%d %b %Y | %I:%M %p IST")
     send_discord_msg(DISCORD_WEBHOOK,
@@ -129,6 +150,7 @@ def main():
     print(f"\nMatched: {len(results)} stocks")
 
     send_alerts(results, now)
+    save_and_send_csv(results, now)
     print("✅ Alerts sent!")
 
 if __name__ == "__main__":
