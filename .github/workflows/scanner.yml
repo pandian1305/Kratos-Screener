@@ -1,15 +1,15 @@
-name: Kratos Stock Screener
+name: Kratos Setup 1 Screener
 
 on:
   schedule:
-    # Every day at 6:00 PM IST = 12:30 PM UTC, Mon-Fri
-    - cron: '30 12 * * 1-5'
-  workflow_dispatch:  # Manual trigger button
+    # 5:00 PM IST = 11:30 AM UTC, Mon-Fri
+    - cron: '30 11 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       - name: Checkout Repository
@@ -23,9 +23,9 @@ jobs:
       - name: Install Dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Kratos Screener
+      - name: Run Setup 1 Screener
         env:
           TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DISCORD_WEBHOOK:  ${{ secrets.DISCORD_WEBHOOK }}
-        run: python scanner.py
+        run: python setup1_scanner.py
