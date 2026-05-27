@@ -1,7 +1,9 @@
 """
 common.py — Shared utilities for Kratos Screener.
-Uses yfinance with Cloudflare WARP active on GitHub Actions.
-Downloads ALL NSE stocks in small batches with delays.
+Render.com compatible version.
+- No Cloudflare WARP (not available on Render)
+- Uses yfinance with retry logic and rotating user-agents
+- Smaller batches + longer delays to avoid Yahoo Finance rate limiting
 """
 import requests
 import pandas as pd
@@ -9,9 +11,23 @@ import numpy as np
 from datetime import date, timedelta
 from io import StringIO
 import time
+import random
 import pytz
 
 IST = pytz.timezone("Asia/Kolkata")
+
+# Rotating user agents to reduce Yahoo Finance blocks
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) "
+    "Gecko/20100101 Firefox/124.0",
+]
+
 
 # ─── FETCH ALL NSE SYMBOLS ────────────────────────────────
 def get_all_nse_symbols():
@@ -19,7 +35,7 @@ def get_all_nse_symbols():
     try:
         url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
         resp = requests.get(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "User-Agent": random.choice(USER_AGENTS),
             "Referer": "https://www.nseindia.com/"
         }, timeout=30)
         if resp.status_code == 200 and len(resp.text) > 1000:
@@ -43,25 +59,55 @@ def get_all_nse_symbols():
     return get_fallback_symbols()
 
 
+# ─── DOWNLOAD DATA WITH RETRY ─────────────────────────────
+def _download_single_with_retry(ticker, period="1y", retries=3):
+    """
+    Download a single ticker with retries and exponential backoff.
+    Returns DataFrame or None.
+    """
+    import yfinance as yf
+    for attempt in range(retries):
+        try:
+            raw = yf.download(
+                ticker,
+                period=period,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                threads=False,
+                timeout=30,
+            )
+            if raw is not None and not raw.empty and len(raw) >= 20:
+                return raw
+        except Exception as e:
+            wait = (2 ** attempt) + random.uniform(0.5, 1.5)
+            print(f"  Retry {attempt+1}/{retries} for {ticker}: {e}")
+            time.sleep(wait)
+    return None
+
+
 # ─── DOWNLOAD ALL NSE DATA IN BATCHES ─────────────────────
 def download_all_data(symbols, period="1y"):
     """
     Download OHLCV for all symbols using yfinance.
-    Uses small batches of 10 stocks with 3s delays between batches.
-    This avoids Yahoo Finance rate limiting even with WARP active.
+    Render-compatible: smaller batches (5), longer delays (5–8s),
+    per-ticker retry on failure.
     Returns dict: {symbol: DataFrame with Date,Open,High,Low,Close,Volume}
     """
     import yfinance as yf
 
-    tickers  = [f"{s}.NS" for s in symbols]
-    all_data = {}
-    batch_size = 10
+    tickers    = [f"{s}.NS" for s in symbols]
+    all_data   = {}
+    batch_size = 5          # Smaller batches — Render has no WARP
+    delay_min  = 5          # Seconds between batches (min)
+    delay_max  = 8          # Seconds between batches (max)
     batches    = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
     total      = len(tickers)
     done       = 0
     failed     = 0
 
     print(f"Downloading {total} stocks in {len(batches)} batches of {batch_size}...")
+    print(f"Estimated time: {len(batches) * 6 / 60:.0f}–{len(batches) * 9 / 60:.0f} mins")
     start_time = time.time()
 
     for batch_num, batch in enumerate(batches):
@@ -73,56 +119,71 @@ def download_all_data(symbols, period="1y"):
                 group_by="ticker",
                 auto_adjust=True,
                 progress=False,
-                threads=False,   # No threads — avoids rate limit
-                timeout=30
+                threads=False,
+                timeout=30,
             )
 
-            if raw.empty:
-                failed += len(batch)
-                done   += len(batch)
+            if raw is None or raw.empty:
+                # Retry each ticker individually on batch failure
+                for ticker in batch:
+                    sym = ticker.replace(".NS", "")
+                    df  = _download_single_with_retry(ticker, period)
+                    if df is not None:
+                        df = _clean_df(df)
+                        if df is not None:
+                            all_data[sym] = df
+                            done += 1
+                        else:
+                            failed += 1; done += 1
+                    else:
+                        failed += 1; done += 1
                 continue
 
             for ticker in batch:
-                sym = ticker.replace(".NS","")
+                sym = ticker.replace(".NS", "")
                 try:
                     if len(batch) == 1:
                         df = raw.copy()
                     else:
                         if ticker not in raw.columns.get_level_values(0):
+                            # Single ticker missing — retry individually
+                            df_retry = _download_single_with_retry(ticker, period)
+                            if df_retry is not None:
+                                df_retry = _clean_df(df_retry)
+                                if df_retry is not None:
+                                    all_data[sym] = df_retry
                             failed += 1
+                            done   += 1
                             continue
                         df = raw[ticker].copy()
 
-                    df = df.dropna(subset=["Close"])
-                    if len(df) < 20:
-                        failed += 1
-                        done   += 1
-                        continue
-
-                    df = df.reset_index()
-                    # Normalise date column name
-                    for col in ["Date","Datetime","index"]:
-                        if col in df.columns:
-                            df = df.rename(columns={col: "Date"})
-                            break
-                    df["Date"] = pd.to_datetime(df["Date"])
-                    df = df.sort_values("Date").reset_index(drop=True)
-                    # Ensure required columns exist
-                    for col in ["Open","High","Low","Close","Volume"]:
-                        if col not in df.columns:
-                            failed += 1
-                            break
-                    else:
+                    df = _clean_df(df)
+                    if df is not None:
                         all_data[sym] = df
                         done += 1
+                    else:
+                        failed += 1
+                        done   += 1
+
                 except Exception:
                     failed += 1
                     done   += 1
                     continue
 
         except Exception as e:
-            failed += len(batch)
-            done   += len(batch)
+            print(f"  Batch {batch_num+1} failed: {e} — retrying individually")
+            for ticker in batch:
+                sym = ticker.replace(".NS", "")
+                df  = _download_single_with_retry(ticker, period)
+                if df is not None:
+                    df = _clean_df(df)
+                    if df is not None:
+                        all_data[sym] = df
+                        done += 1
+                    else:
+                        failed += 1; done += 1
+                else:
+                    failed += 1; done += 1
 
         # Progress every 10 batches
         if (batch_num + 1) % 10 == 0:
@@ -131,13 +192,34 @@ def download_all_data(symbols, period="1y"):
             print(f"  [{batch_num+1}/{len(batches)}] {done}/{total} ({pct:.0f}%) "
                   f"| Got:{len(all_data)} Failed:{failed} | {elapsed:.0f}s elapsed")
 
-        # Delay between batches to avoid rate limiting
-        time.sleep(3)
+        # Random delay between batches — avoids Yahoo Finance throttling
+        time.sleep(random.uniform(delay_min, delay_max))
 
     elapsed = time.time() - start_time
     print(f"\n✅ Download complete: {len(all_data)} stocks in {elapsed:.0f}s "
           f"({elapsed/60:.1f} mins)")
     return all_data
+
+
+def _clean_df(df):
+    """Normalise a raw yfinance DataFrame. Returns cleaned df or None."""
+    try:
+        df = df.dropna(subset=["Close"])
+        if len(df) < 20:
+            return None
+        df = df.reset_index()
+        for col in ["Date", "Datetime", "index"]:
+            if col in df.columns:
+                df = df.rename(columns={col: "Date"})
+                break
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.sort_values("Date").reset_index(drop=True)
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col not in df.columns:
+                return None
+        return df
+    except Exception:
+        return None
 
 
 # ─── RESAMPLE HELPERS ─────────────────────────────────────
@@ -239,13 +321,10 @@ def get_fallback_symbols():
         "GRINDWELL","CDSL","BSE","MCX","ANGELONE","NAUKRI","INDIAMART",
         "LALPATHLAB","METROPOLIS","MAXHEALTH","FORTIS","NARAYANHRU","KIMS",
         "HINDPETRO","BPCL","IOC","MGL","IGL","GUJGASLTD","PETRONET","GAIL",
-        "DEEPAKFERT","COROMANDEL","ASTRAL","APOLLOTYRE","BALKRISIND","CEATLTD",
-        "MOTHERSON","BHARATFORG","LTIM","COFORGE","UNIONBANK","BANKBARODA",
-        "PNB","CANBK","BANDHANBNK","FEDERALBNK","IDFCFIRSTB","RBLBANK",
-        "IRCON","RVNL","NBCC","ENGINERSIN","ROUTE","TANLA","INTELLECT",
-        "MASTEK","ZENSAR","RATEGAIN","CYIENT","AAVAS","HOMEFIRST","APTUS",
-        "CREDITACC","SPANDANA","FUSION","INOXWIND","ADANIPOWER","NYKAA",
-        "POLICYBZR","IXIGO","LTTS","HEXAWARE","NIITTECH","SASKEN",
+        "DEEPAKFERT","IRCON","RVNL","NBCC","ENGINERSIN","ROUTE","TANLA",
+        "INTELLECT","MASTEK","ZENSAR","RATEGAIN","CYIENT","AAVAS","HOMEFIRST",
+        "APTUS","CREDITACC","SPANDANA","FUSION","INOXWIND","ADANIPOWER",
+        "NYKAA","POLICYBZR","IXIGO","LTTS","HEXAWARE","NIITTECH","SASKEN",
         "BLUESTARCO","WHIRLPOOL","AMBER","DIXON","CROMPTON","POLYCAB",
         "KEI","VGUARD","SOLARINDS","DATAPATTNS","COCHINSHIP","GRSE","MAZDOCK",
         "TRIDENT","VARDHMAN","RAYMOND","WELSPUNIND","TRENT","ABFRL","KPRMILL",
