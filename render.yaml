@@ -6,8 +6,9 @@ services:
     schedule: "30 11 * * 1-5"   # 5:00 PM IST = 11:30 AM UTC, Mon–Fri
     buildCommand: pip install -r requirements.txt
     startCommand: python setup1_scanner.py
-    pythonVersion: "3.11.9"
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
@@ -22,8 +23,9 @@ services:
     schedule: "30 11 * * 1-5"
     buildCommand: pip install -r requirements.txt
     startCommand: python setup2_scanner.py
-    pythonVersion: "3.11.9"
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
@@ -38,8 +40,9 @@ services:
     schedule: "30 11 * * 1-5"
     buildCommand: pip install -r requirements.txt
     startCommand: python setup3_scanner.py
-    pythonVersion: "3.11.9"
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
